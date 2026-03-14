@@ -1,0 +1,17 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Run Grubbot Tests",
+			"type": "shell",
+			"command": ".\\venv\\Scripts\\activate && python -m pytest tests/ -v",
+			"isBackground": false
+		},
+		{
+			"label": "Run Grubbot Pipeline",
+			"type": "shell",
+			"command": ".\\venv\\Scripts\\activate && grubbot run --tools examples/tools.yaml --goal examples/goal.md --model qwen2.5-3b",
+			"isBackground": false
+		}
+	]
+}

@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "grubbot"
+version = "0.1.0"
+description = "Autonomous loop for tool-use finetuning"
+readme = "README.md"
+authors = [{ name = "Author" }]
+requires-python = ">=3.10"
+dependencies = [
+    "litellm",
+    "trl",
+    "transformers",
+    "peft",
+    "datasets",
+    "sentence-transformers",
+    "hdbscan",
+    "pyyaml",
+    "pydantic",
+    "click",
+    "python-dotenv",
+    "loguru",
+    "torch"
+]
+
+[project.scripts]
+grubbot = "grubbot.cli:cli"
+
+[project.optional-dependencies]
+dev = ["pytest"]

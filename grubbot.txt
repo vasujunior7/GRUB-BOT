@@ -1,0 +1,173 @@
+grubbot
+Architecture & Project Overview
+Give it your tools. It generates data, finetunes a small local model, finds where it fails,
+and keeps improving until it's reliable.
+open source fully local free by default autonomous loop
+What is Grubbot?
+Grubbot is a four-stage autonomous pipeline that takes your custom tool definitions and
+produces a small, reliable, local model that can use them correctly.
+Most open-source finetuning tools stop after one training run. Grubbot keeps going — it tests
+the model, finds exactly where it fails, generates targeted training data for those failure patterns,
+retrains, and repeats until your accuracy target is hit.
+The name comes from the grub's instinct: dig through everything until you find what you need.
+That's the loop.
+The Problem
+Every developer who wants a local AI assistant hits the same wall: small models are unreliable
+with custom tools. They hallucinate parameters, call the wrong tool, or format responses
+incorrectly.
+The existing solutions all have the same flaw — they finetune once, evaluate once, and stop. If
+the model fails on 20% of your tool calls, you have no clear path to fix it other than manually
+curating more data and starting over.
+No clean solution exists for this specific problem. Grubbot is that solution.
+The Four Stages
+01
+Data Generation
+Calls a free LLM (Gemini Flash / Groq / local 70B) to
+synthesize training examples from your tool definitions
+free API or local
+02
+Finetuning
+Trains a small local model on the generated data using
+Unsloth + TRL with LoRA adapters
+runs on your GPU
+03
+Evaluation
+Runs the finetuned model against a held-out test set and
+scores accuracy per tool
+local
+04
+Failure Clustering
+Embeds failed outputs with sentence-transformers,
+clusters with HDBSCAN, generates targeted retraining
+data, loops back to stage 02
+local · autonomous
+The loop between stages 02–04 is the core innovation. It runs automatically until your target
+accuracy is reached or a maximum iteration count is hit.
+What Makes It Different
+Starts from your tools, not benchmarks
+Not generic function calling datasets. Not someone else's API. Your tools, defined however you
+want — YAML, Python functions, plain text.
+Full autonomous loop, not one-shot
+The pipeline tests, finds failures, fixes them, and retests. This is the pattern from Karpathy's
+autoresearch applied to tool-use finetuning.
+Failure clustering, not just accuracy scores
+Grubbot doesn't just say '78% accuracy'. It groups failures by pattern using HDBSCAN on
+sentence embeddings and tells you exactly what's going wrong and why.
+Fully free after setup
+Uses a free cloud API once for initial data generation (Gemini 2.0 Flash, Groq free tier, or a
+local 70B model via Ollama). Everything after — finetuning, eval, the loop — runs entirely on
+your hardware. Private. No recurring cost.
+Tech Stack
+Component Tool Why
+Data generation LiteLLM Single interface for Gemini, Groq,
+Ollama, any provider
+Finetuning Unsloth + TRL Fastest local LoRA finetuning,
+HuggingFace native
+Failure clustering sentence-transformers +
+HDBSCAN
+Dense embeddings + density
+clustering
+Eval harness Custom Python Simple, readable, no magic
+Config YAML + Markdown tools.yaml for tools, goal.md for
+objectives
+Models Any HuggingFace model Qwen2.5, Llama3, Mistral, Phi —
+your choice
+User Experience
+Step 1 — Define your tools (5 min)
+tools:
+ - name: get_inventory
+ description: Check stock levels
+ parameters:
+ product_id: string
+ warehouse: string
+Step 2 — Set your goal (2 min)
+# goal.md
+Target: 90%+ accuracy on tool selection and parameter filling.
+Priority: never hallucinate parameters.
+Step 3 — Run
+grubbot run --tools tools.yaml --goal goal.md --model qwen2.5-3b
+Step 4 — Wake up to results
+Run complete. 3 iterations.
+get_inventory → 96% ✓
+send_email → 91% ✓
+Failure clusters resolved:
+ parameter hallucination → fixed in iteration 2
+ tool confusion → fixed in iteration 3
+Model saved: ./models/grubbot-qwen2.5-3b-v3
+Project Structure
+📁 grubbot/ project root
+├
+─
+grubbot.py entrypoint CLI: grubbot run / eval / loop
+├
+─
+pyproject.toml litellm, unsloth, trl, hdbscan, sentence-transformers
+└
+─
+.env.example GEMINI_API_KEY, GROQ_API_KEY, HF_TOKEN
+📁 grubbot/ core package
+├
+─
+config.py shared loads + validates tools.yaml and goal.md
+├
+─
+pipeline.py shared orchestrates all 4 stages, owns the loop
+├
+─
+datagen.py stage 1 calls LLM, outputs train.jsonl
+├
+─
+finetune.py stage 2 wraps Unsloth + TRL trainer
+├
+─
+eval.py stage 3 runs test set, scores per tool
+├
+─
+cluster.py stage 4 embeds failures, HDBSCAN, labels clusters
+└
+─
+loop.py stage 4 autonomous retrain until target hit
+📁 grubbot/providers/ free LLM backends
+├
+─
+gemini.py free API Gemini 2.0 Flash — default provider
+├
+─
+groq.py free API Llama 3.3 70B via Groq free tier
+└
+─
+ollama.py fully local any local model via Ollama — zero API calls
+📁 data/ generated at runtime, gitignored
+├
+─
+train.jsonl synthetic training examples from stage 1
+├
+─
+eval.jsonl held-out test set
+└
+─
+failures/ per-iteration failure dumps
+📁 models/ saved checkpoints per iteration, gitignored
+📁 runs/ run_001.json — full logs per run
+📁 examples/ tools.yaml + goal.md starter templates
+📁 tests/ test_datagen.py, test_eval.py, test_cluster.py
+Build Phases
+Phase 1 — Core Pipeline (weeks 1–6)
+Working end-to-end: user defines tools → data generated → model finetuned → evaluation
+report. This alone is shippable and useful.
+Phase 2 — The Autonomous Loop (weeks 7–10)
+Add failure clustering and the retrain loop. Model improves autonomously until target accuracy
+is hit. This is where Grubbot becomes genuinely novel.
+Phase 3 — The Research Layer (months 3–4)
+Real usage generates real data: which failure patterns are most common, how many examples
+per tool does it actually need, which model sizes work best. Write this up as a paper.
+Who Is It For
+User Why Grubbot
+Solo developers Want a local AI that reliably uses their personal tools
+Small startups Can't afford GPT-4 API costs at production scale
+Healthcare / Legal IT Can't send sensitive data to cloud APIs
+ML engineers Want to own, audit, and control their models fully
+Researchers Need reproducible tool-use benchmarks and baselines
+The One Thing To Remember
+Every developer who wants a local AI assistant hits this wall — small models are
+unreliable with custom tools. No clean solution exists. Grubbot is that solution

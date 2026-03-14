@@ -1,0 +1,28 @@
+tools:
+  - name: get_inventory
+    description: Check stock levels for a product in a specific warehouse
+    parameters:
+      product_id:
+        type: string
+        description: The product identifier
+        required: true
+      warehouse:
+        type: string
+        description: Warehouse location code
+        required: true
+
+  - name: send_email
+    description: Send an email to a recipient
+    parameters:
+      to:
+        type: string
+        description: Recipient email address
+        required: true
+      subject:
+        type: string
+        description: Email subject line
+        required: true
+      body:
+        type: string
+        description: Email body content
+        required: true
