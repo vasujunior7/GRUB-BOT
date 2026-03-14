@@ -1,15 +1,47 @@
 tools:
-  - name: get_inventory
-    description: Check stock levels for a product in a specific warehouse
+  - name: get_weather
+    description: Get the current weather in a given location
     parameters:
-      product_id:
+      location:
         type: string
-        description: The product identifier
+        description: The city and state, e.g., San Francisco, CA
         required: true
-      warehouse:
+      unit:
         type: string
-        description: Warehouse location code
+        description: The temperature unit to use (celsius or fahrenheit)
+        required: false
+
+  - name: search_database
+    description: Search the internal knowledge base for documents about a specific topic
+    parameters:
+      query:
+        type: string
+        description: The search query to look for
         required: true
+      max_results:
+        type: integer
+        description: The maximum number of results to return
+        required: false
+
+  - name: create_calendar_event
+    description: Create a new event in the user's calendar
+    parameters:
+      title:
+        type: string
+        description: The title of the event
+        required: true
+      date:
+        type: string
+        description: The date of the event in YYYY-MM-DD format
+        required: true
+      duration_minutes:
+        type: integer
+        description: Duration of the event in minutes
+        required: true
+      attendees:
+        type: string
+        description: Comma-separated list of email addresses of people to invite
+        required: false
 
   - name: send_email
     description: Send an email to a recipient

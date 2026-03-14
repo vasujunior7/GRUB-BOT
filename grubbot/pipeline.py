@@ -125,6 +125,25 @@ def run_full_pipeline(tools_path: str, goal_path: str, model_name: str, provider
     with open(f"runs/run_{len(os.listdir('runs')) + 1}.json", "w") as f:
         json.dump(run_log, f, indent=2)
 
+
+def run_datagen_only(tools_path: str, goal_path: str, provider_name: str = "gemini"):
+    """Run only Stage 1 to generate synthetic training data."""
+    logger.info("Loading tools and goal configuration for datagen...")
+    tools = load_tools(tools_path)
+    goal = load_goal_from_markdown(goal_path)
+    provider = get_provider(provider_name)
+    
+    os.makedirs("data", exist_ok=True)
+    train_path = "data/train.jsonl"
+    eval_path = "data/eval.jsonl"
+    
+    logger.info(f"Stage 1 - Generating base synthetic data using {provider_name}...")
+    examples = generate_examples(tools, goal, provider, count_per_tool=30)
+    logger.info(f"Generated {len(examples)} examples.")
+    split_and_save(examples, train_path, eval_path)
+    logger.info(f"Data saved to {train_path} and {eval_path}.")
+
+
 def run_eval_only(model_path: str, eval_path: str, tools_path: str) -> EvalResult:
     tools = load_tools(tools_path)
     model, tokenizer = load_model(model_path)
