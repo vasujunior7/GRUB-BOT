@@ -17,23 +17,27 @@ Parameters:
     for p_name, p_def in tool.parameters.items():
         req = "required" if p_def.required else "optional"
         prompt += f"- {p_name} ({p_def.type}, {req}): {p_def.description}\n"
-        
+
     prompt += """
-Please generate the output as a valid JSON array of objects. 
+Please generate the output as a valid JSON array of objects.
 Each object MUST have:
-1. "user_query": A realistic user message (include varied phrasing, typos, partial info if optional parameters exist).
+1. "user_query": A realistic user message.
 2. "expected_tool_call": A dictionary having the "name" of the tool, and "arguments" containing the exact extracted parameters from the user's query.
 
-Make the examples diverse:
-- Standard clear requests.
-- Requests where some optional parameters are missing.
-- Requests with extra conversational boilerplate.
+Make the examples extremely diverse to ensure robust model performance:
+- **Standard requests:** Clear, direct queries.
+- **Conversational boilerplate:** Queries wrapped in conversational text (e.g., "Hey, can you please...", "I was wondering if...").
+- **Missing optional parameters:** Queries where optional parameters are deliberately left out.
+- **Negative examples:** Queries that are related but should NOT trigger this tool. For these, `expected_tool_call` should be `null`. (Generate about 10-15% of these).
+- **Ambiguous queries:** Queries that might be slightly confusing or could potentially be misinterpreted, testing the model's ability to differentiate.
+- **Complex phrasing:** Queries that use indirect language or require more inference to understand.
+- **Typographical errors:** Queries with common spelling mistakes.
 
 Output strictly valid JSON (an array of objects) and nothing else.
 """
     return prompt
 
-def generate_examples(tools: List[ToolDefinition], goal: GoalConfig, provider: BaseProvider, count_per_tool: int = 50) -> List[Dict[str, Any]]:
+def generate_examples(tools: List[ToolDefinition], goal: GoalConfig, provider: BaseProvider, count_per_tool: int = 200) -> List[Dict[str, Any]]:
     all_examples = []
     
     # We serialize the full tools schema to include it in every example's "tools" field

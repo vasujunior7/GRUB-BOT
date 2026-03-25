@@ -75,7 +75,7 @@ def train(model, tokenizer, dataset, output_dir: str):
         dataset_num_proc=2,
         packing=False,
         args=TrainingArguments(
-            per_device_train_batch_size=2,
+            per_device_train_batch_size=4,
             gradient_accumulation_steps=4,
             warmup_steps=5,
             num_train_epochs=3,
