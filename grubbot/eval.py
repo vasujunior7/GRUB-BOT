@@ -1,8 +1,14 @@
 import json
 import re
+import difflib
 from typing import List, Dict, Any, Tuple
 from pydantic import BaseModel
 from .config import ToolDefinition
+
+def is_semantically_similar(a: str, b: str, threshold: float = 0.8) -> bool:
+    if a.lower() == b.lower(): 
+        return True
+    return difflib.SequenceMatcher(None, a.lower(), b.lower()).ratio() >= threshold
 
 class FailedExample(BaseModel):
     id: str
@@ -37,12 +43,20 @@ def score_single(prediction: str, expected: Dict[str, Any]) -> Tuple[bool, str]:
     pred_args = pred_json.get("arguments", {})
     exp_args = expected.get("arguments", {})
 
-    # Evaluate exact parameter matches
+    # Evaluate exact/semantic parameter matches
     for k, v in exp_args.items():
         if k not in pred_args:
             return False, "missing_param"
-        if str(pred_args[k]).lower() != str(v).lower():
-             return False, "wrong_param_value"
+        
+        val_pred = pred_args[k]
+        val_exp = v
+        
+        if isinstance(val_exp, str) and isinstance(val_pred, str):
+            if not is_semantically_similar(val_pred, val_exp):
+                return False, "wrong_param_value"
+        else:
+            if str(val_pred).lower() != str(val_exp).lower():
+                 return False, "wrong_param_value"
 
     # Evaluate hallucinated parameters
     for k in pred_args.keys():
@@ -52,10 +66,8 @@ def score_single(prediction: str, expected: Dict[str, Any]) -> Tuple[bool, str]:
     return True, ""
 
 def evaluate(model, tokenizer, eval_path: str, tools: List[ToolDefinition]) -> EvalResult:
-    # Model is passed if using UNsloth inference directly
-    # For simplicity of standalone eval in this iteration, we mock inference or require generation logic
-    from unsloth import FastLanguageModel
-    FastLanguageModel.for_inference(model)
+    # Use standard PyTorch inference mode
+    model.eval()
     
     with open(eval_path, "r", encoding="utf-8") as f:
         lines = f.readlines()
@@ -75,14 +87,42 @@ def evaluate(model, tokenizer, eval_path: str, tools: List[ToolDefinition]) -> E
             tool_counts[tool_name] = {"total": 0, "correct": 0}
         tool_counts[tool_name]["total"] += 1
         
-        # Format the inference prompt
+        # Format the inference prompt with tool definitions
+        tools_schema = []
+        for t in tools:
+            props = {}
+            for p_name, p_def in t.parameters.items():
+                props[p_name] = {"type": p_def.type, "description": p_def.description}
+            required = [k for k, v in t.parameters.items() if v.required]
+            tools_schema.append({
+                "type": "function",
+                "function": {
+                    "name": t.name,
+                    "description": t.description,
+                    "parameters": {"type": "object", "properties": props, "required": required}
+                }
+            })
+            
+        tools_json = json.dumps(tools_schema, indent=2)
+        system_prompt = f"You are a helpful assistant with access to the following tools:\n{tools_json}\n\nWhen the user's request matches a tool, respond with a JSON object containing 'name' and 'arguments'. If no tool matches, respond with 'null'."
+        
         conversation = [
+            {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_query}
         ]
         text = tokenizer.apply_chat_template(conversation, tokenize=False, add_generation_prompt=True)
-        inputs = tokenizer([text], return_tensors="pt").to("cuda")
+        inputs = tokenizer([text], return_tensors="pt").to(model.device)
         
-        outputs = model.generate(**inputs, max_new_tokens=256, use_cache=True)
+        import torch
+        with torch.inference_mode():
+            outputs = model.generate(
+                **inputs, 
+                max_new_tokens=256, 
+                use_cache=True,
+                do_sample=False,
+                temperature=1.0,
+                repetition_penalty=1.1
+            )
         # Decode only the new output tokens
         pred_text = tokenizer.batch_decode(outputs[:, inputs.input_ids.shape[1]:], skip_special_tokens=True)[0]
         

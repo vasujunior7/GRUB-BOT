@@ -13,8 +13,12 @@ class FailureCluster(BaseModel):
     examples: List[FailedExample]
     size: int
 
+_embedder = None
+
 def embed_failures(failures: List[FailedExample]) -> np.ndarray:
-    model = SentenceTransformer('all-MiniLM-L6-v2')
+    global _embedder
+    if _embedder is None:
+        _embedder = SentenceTransformer('all-MiniLM-L6-v2')
     
     texts_to_embed = []
     for f in failures:
@@ -25,7 +29,7 @@ def embed_failures(failures: List[FailedExample]) -> np.ndarray:
                f"User query: {f.user_query}"
         texts_to_embed.append(text)
         
-    embeddings = model.encode(texts_to_embed)
+    embeddings = _embedder.encode(texts_to_embed)
     return embeddings
 
 def cluster_failures(failures: List[FailedExample], embeddings: np.ndarray) -> List[FailureCluster]:

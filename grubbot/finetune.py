@@ -1,39 +1,45 @@
-import os
+import json
 import torch
 from datasets import load_dataset
-from trl import SFTTrainer
-from transformers import TrainingArguments
+from trl import SFTTrainer, SFTConfig
+from transformers import AutoModelForCausalLM, AutoTokenizer
+from peft import get_peft_model, LoraConfig, PeftModel
 
-try:
-    from unsloth import FastLanguageModel
-    UNSLOTH_AVAILABLE = True
-except ImportError:
-    UNSLOTH_AVAILABLE = False
-    print("WARNING: Unsloth not installed. Will fallback to standard transformers if used (not recommended for Grubbot).")
-
-def load_model(model_name: str, max_seq_length: int = 2048):
-    if not UNSLOTH_AVAILABLE:
-        raise RuntimeError("Unsloth is required for Grubbot finetuning. Please install it.")
-        
-    model, tokenizer = FastLanguageModel.from_pretrained(
-        model_name=model_name,
-        max_seq_length=max_seq_length,
-        dtype=None,
-        load_in_4bit=True,
-    )
+def load_base_model(model_name: str):
+    tokenizer = AutoTokenizer.from_pretrained(model_name)
     
-    model = FastLanguageModel.get_peft_model(
-        model,
-        r=16,
-        target_modules=["q_proj", "k_proj", "v_proj", "o_proj"],
-        lora_alpha=16,
-        lora_dropout=0,
+    # CPU fallback: only use device_map="auto" when CUDA is available
+    load_kwargs = {
+        "torch_dtype": torch.bfloat16 if torch.cuda.is_available() else torch.float32,
+    }
+    if torch.cuda.is_available():
+        load_kwargs["device_map"] = "auto"
+    
+    model = AutoModelForCausalLM.from_pretrained(model_name, **load_kwargs)
+    
+    peft_config = LoraConfig(
+        r=32,
+        lora_alpha=64,
+        target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
+        lora_dropout=0.05,
         bias="none",
-        use_gradient_checkpointing="unsloth",
-        random_state=3407,
-        use_rslora=False,
-        loftq_config=None,
+        task_type="CAUSAL_LM"
     )
+    model = get_peft_model(model, peft_config)
+    
+    return model, tokenizer
+
+def load_from_checkpoint(base_model_name: str, checkpoint_path: str):
+    tokenizer = AutoTokenizer.from_pretrained(checkpoint_path)
+    
+    load_kwargs = {
+        "torch_dtype": torch.bfloat16 if torch.cuda.is_available() else torch.float32,
+    }
+    if torch.cuda.is_available():
+        load_kwargs["device_map"] = "auto"
+    
+    base_model = AutoModelForCausalLM.from_pretrained(base_model_name, **load_kwargs)
+    model = PeftModel.from_pretrained(base_model, checkpoint_path, is_trainable=True)
     
     return model, tokenizer
 
@@ -41,15 +47,26 @@ def formatting_prompts_func(tokenizer):
     def wrapper(example):
         texts = []
         for i in range(len(example['messages'])):
-            # Extremely simplified text generation - assumes chat template applies 
-            # In a real scenario, applying tokenizer.apply_chat_template is preferred
             msgs = example['messages'][i]
             expected_call = example['expected_tool_call'][i]
             
-            # Format expected call as the assistant's output
-            assistant_response = f'{{"name": "{expected_call["name"]}", "arguments": {expected_call["arguments"]}}}'
+            # Safely extract tools_schema without IndexError
+            tools_schema = []
+            if 'tools' in example and example['tools']:
+                tools_schema = example['tools'][i]
+            
+            # 1. Add system prompt with tool schema so the model knows what tools exist
+            tools_json = json.dumps(tools_schema, indent=2)
+            system_prompt = f"You are a helpful assistant with access to the following tools:\n{tools_json}\n\nWhen the user's request matches a tool, respond with a JSON object containing 'name' and 'arguments'. If no tool matches, respond with 'null'."
+            
+            # 2. Fix the malformed JSON bug (using json.dumps instead of f-string dict repr)
+            if expected_call is None:
+                assistant_response = "null"
+            else:
+                assistant_response = json.dumps({"name": expected_call["name"], "arguments": expected_call["arguments"]})
             
             conversation = [
+                {"role": "system", "content": system_prompt},
                 {"role": "user", "content": msgs[0]["content"]},
                 {"role": "assistant", "content": assistant_response}
             ]
@@ -66,29 +83,34 @@ def prepare_dataset(train_path: str, tokenizer):
     dataset = dataset.map(formatter, batched=True)
     return dataset
 
-def train(model, tokenizer, dataset, output_dir: str):
+def train(model, tokenizer, dataset, output_dir: str, iteration: int = 1):
+    base_lr = 2e-4
+    current_lr = base_lr / (iteration ** 0.5)
+
+    sft_config = SFTConfig(
+        dataset_text_field="text",
+        max_length=512,  # Reduced for CPU efficiency
+        packing=False,
+        per_device_train_batch_size=1,  # CPU safety
+        gradient_accumulation_steps=4,
+        warmup_steps=5,
+        num_train_epochs=3,
+        learning_rate=current_lr,
+        fp16=False,  # Forced off for CPU
+        bf16=False,  # Forced off for CPU
+        logging_steps=1,
+        optim="adamw_torch",  # Standard PyTorch optimizer (CPU safe)
+        weight_decay=0.01,
+        lr_scheduler_type="linear",
+        seed=3407,
+        output_dir=output_dir,
+        use_cpu=not torch.cuda.is_available(),  # Force CPU when no GPU
+    )
     trainer = SFTTrainer(
         model=model,
         train_dataset=dataset,
-        dataset_text_field="text",
-        max_seq_length=2048,
-        dataset_num_proc=2,
-        packing=False,
-        args=TrainingArguments(
-            per_device_train_batch_size=4,
-            gradient_accumulation_steps=4,
-            warmup_steps=5,
-            num_train_epochs=3,
-            learning_rate=2e-4,
-            fp16=not torch.cuda.is_bf16_supported(),
-            bf16=torch.cuda.is_bf16_supported(),
-            logging_steps=1,
-            optim="adamw_8bit",
-            weight_decay=0.01,
-            lr_scheduler_type="linear",
-            seed=3407,
-            output_dir=output_dir,
-        ),
+        processing_class=tokenizer,
+        args=sft_config,
     )
     trainer.train()
     return trainer

@@ -1,8 +1,30 @@
 import json
 import random
-from typing import List, Dict, Any
+import hashlib
+from typing import List, Dict, Any, Set
 from .config import ToolDefinition, GoalConfig
 from .providers.base import BaseProvider
+
+def validate_example(item: Dict[str, Any], tools: List[ToolDefinition]) -> bool:
+    if "user_query" not in item or "expected_tool_call" not in item:
+        return False
+    tc = item["expected_tool_call"]
+    if tc is None:
+        return True # Negative example is valid
+    if not isinstance(tc, dict) or "name" not in tc or "arguments" not in tc:
+        return False
+    tool_dict = {t.name: t for t in tools}
+    if tc["name"] not in tool_dict:
+        return False
+    t = tool_dict[tc["name"]]
+    for p_name, p_def in t.parameters.items():
+        if p_def.required and p_name not in tc["arguments"]:
+            return False
+    return True
+
+def get_example_hash(user_query: str, expected_tool_call: Any) -> str:
+    tc_str = json.dumps(expected_tool_call, sort_keys=True)
+    return hashlib.md5(f"{user_query}||{tc_str}".encode()).hexdigest()
 
 def build_datagen_prompt(tool: ToolDefinition, count: int) -> str:
     """Builds a prompt asking the LLM to generate tool-use examples based on the tool definition."""
@@ -39,6 +61,7 @@ Output strictly valid JSON (an array of objects) and nothing else.
 
 def generate_examples(tools: List[ToolDefinition], goal: GoalConfig, provider: BaseProvider, count_per_tool: int = 200) -> List[Dict[str, Any]]:
     all_examples = []
+    seen_hashes = set()
     
     # We serialize the full tools schema to include it in every example's "tools" field
     tools_schema = []
@@ -67,7 +90,7 @@ def generate_examples(tools: List[ToolDefinition], goal: GoalConfig, provider: B
         prompt = build_datagen_prompt(tool, count_per_tool)
         system_instruction = "You are a synthetic training data generator. Generate JSON responses only, without formatting blocks."
         
-        raw_response = provider.generate(prompt=prompt, system=system_instruction)
+        raw_response = provider.generate_with_retry(prompt=prompt, system=system_instruction)
         
         # Clean up Markdown JSON blocks if LLM still formats it
         if raw_response.startswith("```json"):
@@ -78,6 +101,14 @@ def generate_examples(tools: List[ToolDefinition], goal: GoalConfig, provider: B
         try:
             generated_items = json.loads(raw_response.strip())
             for item in generated_items:
+                if not validate_example(item, tools):
+                    continue
+                
+                ex_hash = get_example_hash(item["user_query"], item["expected_tool_call"])
+                if ex_hash in seen_hashes:
+                    continue
+                seen_hashes.add(ex_hash)
+                
                 # Format to ChatML with tool calls
                 formatted_example = {
                     "tools": tools_schema,

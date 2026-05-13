@@ -7,7 +7,7 @@ from loguru import logger
 from .config import GrubbotConfig, ToolDefinition
 from .cluster import FailureCluster
 from .providers.base import BaseProvider
-from .datagen import build_datagen_prompt
+from .datagen import build_datagen_prompt, validate_example, get_example_hash
 
 class LoopResult(BaseModel):
     iterations: int
@@ -15,7 +15,9 @@ class LoopResult(BaseModel):
     per_tool_accuracy: Dict[str, float]
     clusters_resolved: List[str]
 
-def generate_targeted_data(cluster: FailureCluster, tools: List[ToolDefinition], provider: BaseProvider, target_count: int = 15) -> List[Dict[str, Any]]:
+def generate_targeted_data(cluster: FailureCluster, tools: List[ToolDefinition], provider: BaseProvider, target_count: int = 15, existing_hashes: set = None) -> List[Dict[str, Any]]:
+    if existing_hashes is None:
+        existing_hashes = set()
     # Format a prompt specifically highlighting the failure
     examples_str = "\n".join([f"Query: {e.user_query} | Expected: {json.dumps(e.expected)} | Model did: {e.predicted}" for e in cluster.examples[:3]])
     
@@ -36,7 +38,7 @@ Output ONLY a JSON array of objects, with each object structured exactly like:
 """
     system_instruction = "You are an expert synthetic data generator fixing AI failure cases. Output raw JSON arrays."
     
-    raw_response = provider.generate(prompt, system=system_instruction)
+    raw_response = provider.generate_with_retry(prompt, system=system_instruction)
     
     # Simple JSON extraction
     if "```json" in raw_response:
@@ -62,10 +64,17 @@ Output ONLY a JSON array of objects, with each object structured exactly like:
             }
         })
         
-    try:
         data = json.loads(raw_response)
         for item in data:
-             all_examples.append({
+            if not validate_example(item, tools):
+                continue
+                
+            ex_hash = get_example_hash(item["user_query"], item["expected_tool_call"])
+            if ex_hash in existing_hashes:
+                continue
+            existing_hashes.add(ex_hash)
+            
+            all_examples.append({
                 "tools": tools_schema,
                 "messages": [{"role": "user", "content": item["user_query"]}],
                 "expected_tool_call": item["expected_tool_call"]
@@ -75,6 +84,4 @@ Output ONLY a JSON array of objects, with each object structured exactly like:
         
     return all_examples
 
-def run_loop(config: GrubbotConfig) -> LoopResult:
-    """Normally orchestrates the retrain loop between eval, cluster, data-aug, and finetune."""
-    pass
+

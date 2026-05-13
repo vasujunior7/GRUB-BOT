@@ -47,32 +47,17 @@ def load_tools(path: str) -> List[ToolDefinition]:
         ))
     return tools
 
-def load_goal_from_markdown(path: str) -> GoalConfig:
+def load_goal(path: str) -> GoalConfig:
     with open(path, "r", encoding="utf-8") as f:
-        content = f.read()
-    
-    # Parse markdown simply
-    lines = content.splitlines()
-    target_accuracy = 0.9
-    max_iterations = 5
-    priorities = []
-    
-    for line in lines:
-        lower_line = line.lower()
-        if "target:" in lower_line:
-            # Extract target percentage (e.g. 90%+)
-            import re
-            match = re.search(r"(\d+)%", lower_line)
-            if match:
-                target_accuracy = float(match.group(1)) / 100.0
-        elif "max iterations:" in lower_line:
-            import re
-            match = re.search(r"(\d+)", lower_line)
-            if match:
-                max_iterations = int(match.group(1))
-        elif "priority:" in lower_line:
-            parts = line.split(":", 1)
-            if len(parts) > 1:
-                priorities.append(parts[1].strip())
-                
-    return GoalConfig(target_accuracy=target_accuracy, max_iterations=max_iterations, priorities=priorities)
+        data = yaml.safe_load(f)
+        
+    if not data or "goal" not in data:
+        # Fallback for old markdown style gracefully, but encourage yaml
+        return GoalConfig(target_accuracy=0.9, max_iterations=5, priorities=[])
+        
+    g_data = data["goal"]
+    return GoalConfig(
+        target_accuracy=g_data.get("target_accuracy", 0.9),
+        max_iterations=g_data.get("max_iterations", 5),
+        priorities=g_data.get("priorities", [])
+    )
