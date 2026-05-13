@@ -72,19 +72,20 @@ grubbot run --tools examples/tools.yaml --goal examples/goal.md --model unsloth/
 Grubbot operates in a linear but looping 4-stage pipeline. The loop between stages 2 ↔ 4 is the core innovation.
 
 1. **🟡 Stage 1: Data Generation** 
-   * **What it does:** Calls an LLM to synthesize hundreds of variations of queries based on your `tools.yaml`.
-   * **The Output:** A perfectly formatted ChatML JSONL dataset featuring standard calls, edge-cases (missing optional params), and negative rejects.
+   * **What it does:** Calls an LLM to synthesize hundreds of variations of queries based on your tools.
+   * **The Output:** A perfectly formatted ChatML JSONL dataset featuring standard calls, edge-cases, and negative rejects. Now with **automatic deduplication and validation** to prevent hallucinated data.
    
 2. **🟣 Stage 2: Finetuning** 
-   * **What it does:** Uses Unsloth and TRL to rapidly train a **LoRA adapter** on your base HuggingFace model. Only ~1% of parameters are trained, ensuring blisteringly fast iteration speeds.
+   * **What it does:** Uses Unsloth and TRL to rapidly train a **LoRA adapter** on your base HuggingFace model. 
+   * **Robustness:** Features aggressive **VRAM cleanup** and **dynamic learning rate decay** to ensure stability across multiple iterations.
    
 3. **🟠 Stage 3: Evaluation** 
    * **What it does:** Runs the newly-trained LoRA adapter against the held-out `eval.jsonl` test set. 
-   * **The Output:** A hard-coded algorithmic score checking for *exact key matches*, *correct tool selection*, and *valid JSON parsing*.
+   * **The Output:** Evaluates against a Baseline using **Semantic Scoring** (`difflib`) to give partial credit for phrasing, avoiding strict string-matching failures.
 
 4. **🔴 Stage 4: Failure Clustering & Auto-Loop** 
-   * **What it does:** Extracts every single failed evaluation and embeds the bad outputs into a dense vector space using `sentence-transformers`. It runs density-based clustering (`HDBSCAN`) to find common patterns.
-   * **The Fix:** It instructs the LLM provider to dynamically generate highly-targeted patch data specific to that exact failure cluster, appends it to your training set, and **loops back to Stage 2**.
+   * **What it does:** Extracts every single failed evaluation and clusters them using `sentence-transformers` and `HDBSCAN` to find common patterns.
+   * **The Fix:** It instructs the LLM provider (using **exponential backoff retries**) to dynamically generate targeted patch data. It appends this to your training set (hard-capped at 5,000 examples) and **loops back to Stage 2**.
 
 ---
 
@@ -92,9 +93,12 @@ Grubbot operates in a linear but looping 4-stage pipeline. The loop between stag
 
 Grubbot is intentionally config-driven. The entire pipeline is orchestrated by two files.
 
-### 1. `tools.yaml`
-Define your exact tools, descriptions, and structural parameters here.
+### `config.yaml`
+Define your exact tools, descriptions, structural parameters, and success goals all in one place.
 ```yaml
+goal:
+  target_accuracy: 0.95
+  max_iterations: 5
 tools:
   - name: get_inventory
     description: Check stock levels for a product in a specific warehouse
@@ -107,15 +111,6 @@ tools:
         type: string
         description: Warehouse location code
         required: false
-```
-
-### 2. `goal.md`
-Tell Grubbot what the success conditions look like for the loop to terminate.
-```markdown
-# Goal
-Target: 95%+ accuracy on tool selection and parameter filling.
-Priority: never hallucinate parameters.
-Max iterations: 5
 ```
 
 ---
